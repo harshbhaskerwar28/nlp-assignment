@@ -85,7 +85,7 @@ class RAGPipeline:
     5. Fallback response for irrelevant queries
     """
     
-    def __init__(self, relevance_threshold=0.7):
+    def __init__(self, relevance_threshold=0.5):
         """
         Initialize RAG Pipeline
         
@@ -98,6 +98,7 @@ class RAGPipeline:
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3)
         self.document_loaded = False
         self.document_name = None
+        self.document_summary = None
         logger.info(f"RAG Pipeline initialized with threshold: {relevance_threshold}")
     
     def load_knowledge_base(self, document_text, document_name="Unknown Document"):
@@ -126,12 +127,46 @@ class RAGPipeline:
             self.vector_store = FAISS.from_texts(text_chunks, embedding=self.embeddings)
             self.document_loaded = True
             self.document_name = document_name
-            logger.info("Vector store created successfully")
             
+            # Generate a document summary for general questions
+            try:
+                summary_prompt = f"""
+                Create a short summary (2-3 sentences) of this document that describes what it's about:
+                
+                {document_text[:5000]}
+                
+                Summary:
+                """
+                self.document_summary = self.llm.invoke(summary_prompt).content
+                logger.info(f"Document summary created: {self.document_summary}")
+            except Exception as e:
+                logger.error(f"Error creating document summary: {str(e)}")
+                self.document_summary = f"A document named {document_name}"
+            
+            logger.info("Vector store created successfully")
             return True
         except Exception as e:
             logger.error(f"Error loading knowledge base: {str(e)}")
             return False
+    
+    def is_general_document_question(self, query):
+        """
+        Check if the query is asking about the document in general
+        """
+        general_phrases = [
+            "what is this document about", 
+            "what is the document about",
+            "what is this pdf about", 
+            "what is the pdf about",
+            "what's in this document",
+            "what does this document contain",
+            "what is the topic of",
+            "summarize the document",
+            "document summary"
+        ]
+        query_lower = query.lower()
+        
+        return any(phrase in query_lower for phrase in general_phrases)
     
     def check_relevance(self, query, retrieved_docs):
         """
@@ -144,6 +179,11 @@ class RAGPipeline:
         Returns:
             bool: True if relevant, False otherwise
         """
+        # Always consider general document questions as relevant
+        if self.is_general_document_question(query):
+            logger.info("Query identified as a general document question")
+            return True
+            
         if not retrieved_docs:
             return False
         
@@ -155,7 +195,8 @@ class RAGPipeline:
                 return False
             
             # Check if best match exceeds threshold (lower score = higher similarity in FAISS)
-            best_score = docs_with_scores[0][1]
+            best_score = min(score for _, score in docs_with_scores)  # Get best score from all results
+            # Use a more robust conversion from distance to similarity
             relevance_score = 1 / (1 + best_score)  # Convert distance to similarity
             
             logger.info(f"Relevance score: {relevance_score:.3f}, Threshold: {self.relevance_threshold}")
@@ -178,28 +219,39 @@ class RAGPipeline:
             return "Please load a knowledge base document first."
         
         try:
+            # Handle general document questions directly
+            if self.is_general_document_question(query):
+                if self.document_summary:
+                    return f"This document is about: {self.document_summary}"
+                else:
+                    return f"This is a document named '{self.document_name}'. To get specific information, please ask more specific questions about its content."
+            
             # Step 1: Retrieve relevant documents using similarity search
-            retrieved_docs = self.vector_store.similarity_search(query, k=3)
+            retrieved_docs = self.vector_store.similarity_search(query, k=4)  # Increased from 3 to 4
             
             # Step 2: Check relevance using threshold
             if not self.check_relevance(query, retrieved_docs):
-                return "I cannot answer this question as it is not relevant to the loaded document."
+                return f"I don't have enough information in the document to answer this question confidently. Please try asking a different question about '{self.document_name}'."
             
             # Step 3: Generate response using LLM with retrieved context
             prompt_template = """
-            You are an AI assistant that answers questions based only on the provided context.
-            If the context doesn't contain information to answer the question, say that you cannot answer.
+            You are an AI assistant that answers questions based on the provided context from a document.
+            Answer the question based only on the provided context. Be concise and accurate.
+            If the context doesn't contain enough information to provide a complete answer, 
+            use what is available to give the best possible response.
+            
+            Document name: {document_name}
             
             Context: {context}
             
             Question: {question}
             
-            Answer (be concise and accurate):
+            Answer:
             """
             
             prompt = PromptTemplate(
                 template=prompt_template,
-                input_variables=["context", "question"]
+                input_variables=["context", "question", "document_name"]
             )
             
             # Create QA chain
@@ -210,8 +262,9 @@ class RAGPipeline:
             )
             
             # Generate response
+            context_text = "\n\n".join([doc.page_content for doc in retrieved_docs])
             response = qa_chain(
-                {"input_documents": retrieved_docs, "question": query},
+                {"input_documents": retrieved_docs, "question": query, "document_name": self.document_name},
                 return_only_outputs=True
             )
             
@@ -279,6 +332,10 @@ def main():
     # Show current document status
     if st.session_state.rag_pipeline.document_loaded:
         st.info(f"📚 Current Knowledge Base: {st.session_state.rag_pipeline.document_name}")
+        
+        # Display document summary if available
+        if st.session_state.rag_pipeline.document_summary:
+            st.success(f"📝 Document Summary: {st.session_state.rag_pipeline.document_summary}")
     else:
         st.warning("⚠️ No document loaded. Please upload a document to start asking questions.")
     
@@ -288,7 +345,7 @@ def main():
         "Relevance Threshold",
         min_value=0.1,
         max_value=1.0,
-        value=0.7,
+        value=0.5,
         step=0.1,
         help="Higher threshold = stricter relevance filtering"
     )
