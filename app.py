@@ -180,7 +180,7 @@ class RAGPipeline:
             bool: True if relevant, False otherwise
         """
         # Always consider general document questions as relevant
-        if self.is_general_document_question(query):
+        if hasattr(self, 'is_general_document_question') and self.is_general_document_question(query):
             logger.info("Query identified as a general document question")
             return True
             
@@ -221,7 +221,7 @@ class RAGPipeline:
         try:
             # Handle general document questions directly
             if self.is_general_document_question(query):
-                if self.document_summary:
+                if hasattr(self, 'document_summary') and self.document_summary:
                     return f"This document is about: {self.document_summary}"
                 else:
                     return f"This is a document named '{self.document_name}'. To get specific information, please ask more specific questions about its content."
@@ -334,7 +334,7 @@ def main():
         st.info(f"📚 Current Knowledge Base: {st.session_state.rag_pipeline.document_name}")
         
         # Display document summary if available
-        if st.session_state.rag_pipeline.document_summary:
+        if hasattr(st.session_state.rag_pipeline, 'document_summary') and st.session_state.rag_pipeline.document_summary:
             st.success(f"📝 Document Summary: {st.session_state.rag_pipeline.document_summary}")
     else:
         st.warning("⚠️ No document loaded. Please upload a document to start asking questions.")
