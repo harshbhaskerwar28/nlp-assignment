@@ -7,3 +7,5 @@ faiss-cpu
 python-dotenv
 numpy
 pandas
+PyPDF2
+python-docx
