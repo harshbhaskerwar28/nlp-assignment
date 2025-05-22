@@ -266,166 +266,175 @@ def main():
     Main Streamlit application
     """
     st.set_page_config(
-        page_title="Talk to PDF",
-        page_icon="📄",
+        page_title="RAG Pipeline Demo",
+        page_icon="🤖",
         layout="wide"
     )
     
-    # Initialize session state for chat history
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
+    st.title("🤖 RAG Pipeline Implementation")
+    st.subheader("Document-based Q&A with Relevance Filtering")
     
     # Initialize RAG pipeline in session state
     if 'rag_pipeline' not in st.session_state:
         st.session_state.rag_pipeline = RAGPipeline()
     
-    # CSS for chat interface
-    st.markdown("""
-    <style>
-    .chat-message {
-        padding: 1.5rem; border-radius: 0.5rem; margin-bottom: 1rem; display: flex
-    }
-    .chat-message.user {
-        background-color: #2b313e
-    }
-    .chat-message.bot {
-        background-color: #475063
-    }
-    .chat-message .avatar {
-      width: 20%;
-    }
-    .chat-message .avatar img {
-      max-width: 78px;
-      max-height: 78px;
-      border-radius: 50%;
-      object-fit: cover;
-    }
-    .chat-message .message {
-      width: 80%;
-      padding-left: 1rem;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # Document Upload Section
+    st.header("📄 Upload Knowledge Base Document")
     
-    # Sidebar for configuration
-    with st.sidebar:
-        st.title("📄 Talk to PDF")
-        
-        # Document Upload
-        uploaded_file = st.file_uploader(
-            "Upload Document",
-            type=['txt', 'pdf', 'docx'],
-            help="Supported formats: PDF, DOCX, TXT"
-        )
-        
-        if uploaded_file:
-            # Process the uploaded file
-            with st.spinner("Reading document..."):
-                document_text = None
-                file_extension = uploaded_file.name.split('.')[-1].lower()
-                
-                if file_extension == 'txt':
-                    document_text = DocumentProcessor.extract_text_from_txt(uploaded_file)
-                elif file_extension == 'pdf':
-                    document_text = DocumentProcessor.extract_text_from_pdf(uploaded_file)
-                elif file_extension == 'docx':
-                    document_text = DocumentProcessor.extract_text_from_docx(uploaded_file)
-                
-                if document_text:
-                    # Load the document into the RAG pipeline
-                    with st.spinner("Processing document..."):
-                        if st.session_state.rag_pipeline.load_knowledge_base(document_text, uploaded_file.name):
-                            st.success(f"Document loaded: {uploaded_file.name}")
-                            st.session_state.chat_history = []  # Clear chat history on new document
-                        else:
-                            st.error("Failed to process document")
-                else:
-                    st.error("Could not read document")
-        
-        # Document info
-        if st.session_state.rag_pipeline.document_loaded:
-            st.info(f"Active document: {st.session_state.rag_pipeline.document_name}")
+    uploaded_file = st.file_uploader(
+        "Choose a document file",
+        type=['txt', 'pdf', 'docx'],
+        help="Upload a document to use as your knowledge base. Supported formats: TXT, PDF, DOCX"
+    )
+    
+    if uploaded_file is not None:
+        # Process the uploaded file
+        with st.spinner("Processing document..."):
+            document_text = None
+            file_extension = uploaded_file.name.split('.')[-1].lower()
             
-            # Optional document summary button
-            if st.button("Generate Document Summary"):
-                with st.spinner("Creating summary..."):
-                    try:
-                        document_preview = st.session_state.rag_pipeline.vector_store.similarity_search("document summary", k=5)
-                        text_preview = "\n".join([doc.page_content for doc in document_preview])
-                        summary_prompt = f"Create a short summary of this document: {text_preview}"
-                        summary = st.session_state.rag_pipeline.llm.invoke(summary_prompt).content
-                        st.session_state.rag_pipeline.document_summary = summary
-                        st.success("Summary created!")
-                    except Exception as e:
-                        st.error(f"Error creating summary")
-        
-        # Advanced settings (collapsed by default)
-        with st.expander("Advanced Settings", expanded=False):
-            threshold = st.slider(
-                "Relevance Threshold",
-                min_value=0.1,
-                max_value=1.0,
-                value=0.5,
-                step=0.1
-            )
-            st.session_state.rag_pipeline.relevance_threshold = threshold
-    
-    # Main chat interface
-    if not st.session_state.rag_pipeline.document_loaded:
-        # Welcome screen when no document is loaded
-        st.markdown(
-            """
-            <div style='text-align: center; margin-top: 3rem'>
-                <h1>👋 Welcome to Talk to PDF</h1>
-                <p>Upload a document in the sidebar to get started</p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        # Chat interface when document is loaded
-        st.header("💬 Chat with your Document")
-        
-        # Display chat history
-        for message in st.session_state.chat_history:
-            if message["role"] == "user":
-                st.markdown(f"""
-                <div class="chat-message user">
-                    <div class="message">❓ {message["content"]}</div>
-                </div>
-                """, unsafe_allow_html=True)
+            if file_extension == 'txt':
+                document_text = DocumentProcessor.extract_text_from_txt(uploaded_file)
+            elif file_extension == 'pdf':
+                document_text = DocumentProcessor.extract_text_from_pdf(uploaded_file)
+            elif file_extension == 'docx':
+                document_text = DocumentProcessor.extract_text_from_docx(uploaded_file)
+            
+            if document_text:
+                # Load the document into the RAG pipeline
+                if st.session_state.rag_pipeline.load_knowledge_base(document_text, uploaded_file.name):
+                    st.success(f"✅ Document '{uploaded_file.name}' loaded successfully!")
+                    
+                    # Display document preview
+                    with st.expander("📖 Document Preview"):
+                        preview_text = document_text[:1000] + "..." if len(document_text) > 1000 else document_text
+                        st.text_area("Document Content", preview_text, height=200, disabled=True)
+                        st.info(f"Document length: {len(document_text)} characters")
+                else:
+                    st.error("❌ Failed to load the document. Please check if the document contains enough text.")
             else:
-                content = message["content"]
-                is_error = "don't have enough information" in content.lower() or "cannot answer" in content.lower()
-                icon = "❌" if is_error else "✅"
-                container_style = "error-container" if is_error else ""
+                st.error("❌ Failed to extract text from the document. Please try a different file.")
+    
+    # Show current document status
+    if st.session_state.rag_pipeline.document_loaded:
+        st.info(f"📚 Current Knowledge Base: {st.session_state.rag_pipeline.document_name}")
+        
+        # Replace automatic summary display with a button to show summary on demand
+        if st.button("📝 Generate Document Summary"):
+            with st.spinner("Generating summary..."):
+                if not hasattr(st.session_state.rag_pipeline, 'document_summary') or not st.session_state.rag_pipeline.document_summary:
+                    try:
+                        # Generate summary if it doesn't exist
+                        if hasattr(st.session_state.rag_pipeline, 'llm'):
+                            document_preview = st.session_state.rag_pipeline.vector_store.similarity_search("document summary", k=5)
+                            text_preview = "\n".join([doc.page_content for doc in document_preview])
+                            summary_prompt = f"""
+                            Create a short summary (2-3 sentences) of this document that describes what it's about:
+                            
+                            {text_preview}
+                            
+                            Summary:
+                            """
+                            st.session_state.rag_pipeline.document_summary = st.session_state.rag_pipeline.llm.invoke(summary_prompt).content
+                        else:
+                            st.session_state.rag_pipeline.document_summary = f"A document named {st.session_state.rag_pipeline.document_name}"
+                    except Exception as e:
+                        logger.error(f"Error generating summary: {str(e)}")
+                        st.session_state.rag_pipeline.document_summary = f"A document named {st.session_state.rag_pipeline.document_name}"
                 
-                st.markdown(f"""
-                <div class="chat-message bot">
-                    <div class="message">{icon} {content}</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.success(f"Document Summary: {st.session_state.rag_pipeline.document_summary}")
+    else:
+        st.warning("⚠️ No document loaded. Please upload a document to start asking questions.")
+    
+    # Configuration section
+    st.sidebar.header("⚙️ Configuration")
+    threshold = st.sidebar.slider(
+        "Relevance Threshold",
+        min_value=0.1,
+        max_value=1.0,
+        value=0.5,
+        step=0.1,
+        help="Higher threshold = stricter relevance filtering"
+    )
+    st.session_state.rag_pipeline.relevance_threshold = threshold
+    
+    # Instructions section
+    st.sidebar.header("📋 Instructions")
+    st.sidebar.write("""
+    1. **Upload Document**: Choose a TXT, PDF, or DOCX file
+    2. **Wait for Processing**: Document will be chunked and embedded
+    3. **Ask Questions**: Enter questions related to your document
+    4. **Adjust Threshold**: Control relevance filtering strictness
+    """)
+    
+    st.sidebar.header("💡 Tips")
+    st.sidebar.write("""
+    - **Relevant queries** will be answered based on your document
+    - **Irrelevant queries** will be rejected with a message
+    - Higher threshold = stricter filtering
+    - Lower threshold = more lenient filtering
+    """)
+    
+    # Main chat interface (only show if document is loaded)
+    if st.session_state.rag_pipeline.document_loaded:
+        st.header("💬 Ask Questions About Your Document")
         
         # Query input
-        user_query = st.text_input("Ask a question:", key="user_query")
+        user_query = st.text_input(
+            "Enter your question:",
+            placeholder="Ask something about your uploaded document..."
+        )
         
-        # Generate response when user submits a question
-        if user_query:
-            # Add user query to history
-            st.session_state.chat_history.append({"role": "user", "content": user_query})
-            
-            # Generate and display response
-            with st.spinner("Thinking..."):
-                response = st.session_state.rag_pipeline.generate_response(user_query)
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
-            
-            # Rerun to update chat display
-            st.rerun()
-            
-        # Clear chat button
-        if st.button("Clear Chat"):
+        # Generate response button
+        if st.button("🔍 Get Answer", type="primary"):
+            if user_query.strip():
+                with st.spinner("Processing your question..."):
+                    response = st.session_state.rag_pipeline.generate_response(user_query)
+                    
+                    # Display response with styling
+                    if "don't have enough information" in response.lower() or "cannot answer this question" in response.lower():
+                        st.error(f"{response}")
+                    else:
+                        st.success(f"✅ Response: {response}")
+            else:
+                st.warning("Please enter a question.")
+        
+        # Chat history (optional enhancement)
+        if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
-            st.rerun()
+        
+        # Display chat history
+        if st.session_state.chat_history:
+            st.header("💭 Chat History")
+            for i, (q, a) in enumerate(st.session_state.chat_history[-5:]):  # Show last 5
+                with st.expander(f"Q{i+1}: {q[:50]}..."):
+                    st.write(f"**Question:** {q}")
+                    st.write(f"**Answer:** {a}")
+    
+    # Display pipeline information
+    st.header("🔧 Pipeline Information")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info("""
+        **RAG Pipeline Steps:**
+        1. Document upload & text extraction
+        2. Document chunking & embedding
+        3. Vector storage in FAISS
+        4. Query similarity search
+        5. Relevance threshold check
+        6. LLM response generation
+        """)
+    
+    with col2:
+        st.info(f"""
+        **Current Configuration:**
+        - Model: Gemini 2.0 Flash
+        - Embedding: Google text-embedding-001
+        - Relevance Threshold: {threshold}
+        - Vector Store: FAISS
+        - Document Loaded: {'✅' if st.session_state.rag_pipeline.document_loaded else '❌'}
+        """)
 
 if __name__ == "__main__":
     main()
