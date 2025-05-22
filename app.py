@@ -127,21 +127,7 @@ class RAGPipeline:
             self.vector_store = FAISS.from_texts(text_chunks, embedding=self.embeddings)
             self.document_loaded = True
             self.document_name = document_name
-            
-            # Generate a document summary for general questions
-            try:
-                summary_prompt = f"""
-                Create a short summary (2-3 sentences) of this document that describes what it's about:
-                
-                {document_text[:5000]}
-                
-                Summary:
-                """
-                self.document_summary = self.llm.invoke(summary_prompt).content
-                logger.info(f"Document summary created: {self.document_summary}")
-            except Exception as e:
-                logger.error(f"Error creating document summary: {str(e)}")
-                self.document_summary = f"A document named {document_name}"
+            self.document_summary = None  # Initialize as None, will generate on demand
             
             logger.info("Vector store created successfully")
             return True
@@ -333,9 +319,30 @@ def main():
     if st.session_state.rag_pipeline.document_loaded:
         st.info(f"📚 Current Knowledge Base: {st.session_state.rag_pipeline.document_name}")
         
-        # Display document summary if available
-        if hasattr(st.session_state.rag_pipeline, 'document_summary') and st.session_state.rag_pipeline.document_summary:
-            st.success(f"📝 Document Summary: {st.session_state.rag_pipeline.document_summary}")
+        # Replace automatic summary display with a button to show summary on demand
+        if st.button("📝 Generate Document Summary"):
+            with st.spinner("Generating summary..."):
+                if not hasattr(st.session_state.rag_pipeline, 'document_summary') or not st.session_state.rag_pipeline.document_summary:
+                    try:
+                        # Generate summary if it doesn't exist
+                        if hasattr(st.session_state.rag_pipeline, 'llm'):
+                            document_preview = st.session_state.rag_pipeline.vector_store.similarity_search("document summary", k=5)
+                            text_preview = "\n".join([doc.page_content for doc in document_preview])
+                            summary_prompt = f"""
+                            Create a short summary (2-3 sentences) of this document that describes what it's about:
+                            
+                            {text_preview}
+                            
+                            Summary:
+                            """
+                            st.session_state.rag_pipeline.document_summary = st.session_state.rag_pipeline.llm.invoke(summary_prompt).content
+                        else:
+                            st.session_state.rag_pipeline.document_summary = f"A document named {st.session_state.rag_pipeline.document_name}"
+                    except Exception as e:
+                        logger.error(f"Error generating summary: {str(e)}")
+                        st.session_state.rag_pipeline.document_summary = f"A document named {st.session_state.rag_pipeline.document_name}"
+                
+                st.success(f"Document Summary: {st.session_state.rag_pipeline.document_summary}")
     else:
         st.warning("⚠️ No document loaded. Please upload a document to start asking questions.")
     
@@ -385,10 +392,10 @@ def main():
                     response = st.session_state.rag_pipeline.generate_response(user_query)
                     
                     # Display response with styling
-                    if "cannot answer this question" in response.lower():
-                        st.error(f"❌ **Response:** {response}")
+                    if "don't have enough information" in response.lower() or "cannot answer this question" in response.lower():
+                        st.error(f"{response}")
                     else:
-                        st.success(f"✅ **Response:** {response}")
+                        st.success(f"✅ Response: {response}")
             else:
                 st.warning("Please enter a question.")
         
